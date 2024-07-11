@@ -1,0 +1,288 @@
+Sub Submit_Click()
+    On Error GoTo ErrorHandler
+    
+    Dim spreadsheet As Workbook
+    Set spreadsheet = ThisWorkbook
+    
+    Dim sheetsToHide As Variant
+    sheetsToHide = Array("Guidelines", "Dashboard")
+    
+    Dim requestForm As Worksheet
+    Set requestForm = spreadsheet.Sheets("Request Form")
+    
+    ' Hide specified sheets except the Request Form
+    Dim i As Integer
+    For i = LBound(sheetsToHide) To UBound(sheetsToHide)
+        Dim sheet As Worksheet
+        On Error Resume Next
+        Set sheet = spreadsheet.Sheets(sheetsToHide(i))
+        On Error GoTo 0
+        If Not sheet Is Nothing Then
+            If sheet.Name <> requestForm.Name Then
+                sheet.Visible = xlSheetVeryHidden
+            End If
+        End If
+    Next i
+    
+    Dim activeSheet As Worksheet
+    Set activeSheet = spreadsheet.activeSheet
+    
+    ' Set page setup to legal size and landscape orientation
+    With activeSheet.PageSetup
+        .PaperSize = xlPaperLegal
+        .Orientation = xlLandscape
+        .FitToPagesWide = 1
+        .FitToPagesTall = False
+    End With
+    
+    ' Get the range
+    Dim rng As Range
+    Set rng = activeSheet.Range("A1:G27")
+    
+    ' Capture data from the form
+    Dim requestNo As String
+    requestNo = activeSheet.Range("C4").Value
+    Dim rf_documentDate As Date
+    rf_documentDate = Now()
+    Dim createdBy As String
+    createdBy = activeSheet.Range("G4").Value
+    Dim itemStatus As String
+    itemStatus = activeSheet.Range("C5").Value
+    Dim department As String
+    department = activeSheet.Range("G5").Value
+    
+    ' Capture item data
+    Dim itemName As Variant
+    itemName = activeSheet.Range("B8:B22").Value
+    Dim skus As Variant
+    skus = activeSheet.Range("C8:C22").Value
+    Dim brands As Variant
+    brands = activeSheet.Range("D8:D22").Value
+    Dim rf_quantity As Variant
+    rf_quantity = activeSheet.Range("E8:E22").Value
+    Dim stockFrom As Variant
+    stockFrom = activeSheet.Range("F8:F22").Value
+    Dim stockTo As Variant
+    stockTo = activeSheet.Range("G8:G22").Value
+    
+    ' Convert active sheet to PDF
+    Dim pdfPath As String
+    If IsMac() Then
+        pdfPath = MacScript("return POSIX path of (path to desktop folder as text)") & requestNo & ".pdf"
+    Else
+        pdfPath = Environ("TEMP") & "\" & requestNo & ".pdf"
+    End If
+    
+    If IsMac() Then
+        ' Mac-specific PDF export
+        ExportToPDFMac activeSheet, pdfPath
+    Else
+        ' Windows-specific PDF export
+        On Error GoTo PdfError
+        activeSheet.ExportAsFixedFormat Type:=xlTypePDF, Filename:=pdfPath, _
+            Quality:=xlQualityStandard, IncludeDocProperties:=True, IgnorePrintAreas:=False, OpenAfterPublish:=False
+        On Error GoTo ErrorHandler
+    End If
+    
+    ' Prepare email details
+    Dim recipientEmail As String
+    recipientEmail = "mlcajusay.ati@gmail.com;mcajusay@enabled.ph" ' Change this to the recipient's email addresses
+    Dim ccEmail As String
+    ccEmail = "mcajusay@enabled.ph" ' Change this to the CC recipient's email addresses
+    Dim subject As String
+    subject = requestNo ' Change the subject to "Request Form"
+    Dim body As String
+    body = "Hi Ops Team," & vbCrLf & vbCrLf & _
+           "I hope this email finds you well. Please find attached the PDF report." & vbCrLf & vbCrLf & _
+           "If you have any questions or need further information, feel free to reach out." & vbCrLf & vbCrLf & _
+           "Best regards," & vbCrLf & createdBy
+    
+    ' Send email with PDF attachment
+    If IsMac() Then
+        SendEmailMac pdfPath, recipientEmail, ccEmail, subject, body
+    Else
+        SendEmailWindows pdfPath, recipientEmail, ccEmail, subject, body
+    End If
+    
+    ' Move to the database sheet
+    Dim databaseSheet As Worksheet
+    Set databaseSheet = spreadsheet.Sheets("Request Database")
+    
+    ' Unprotect the database sheet
+    databaseSheet.Unprotect password:="enabled2024"
+    
+    ' Find the last row with data in the database sheet
+    Dim lastRow As Long
+    lastRow = databaseSheet.Cells(databaseSheet.Rows.Count, 1).End(xlUp).Row
+    Dim startRow As Long
+    startRow = lastRow + 1
+    
+    ' Loop through item data and insert into the database sheet
+    For i = 1 To UBound(itemName)
+        If itemName(i, 1) <> "" Then ' Only add non-empty item names
+            Dim Row As Long
+            Row = startRow + i - 1
+            databaseSheet.Cells(Row, 1).Value = IIf(requestNo <> "", requestNo, "")
+            databaseSheet.Cells(Row, 2).Value = rf_documentDate
+            databaseSheet.Cells(Row, 3).Value = IIf(itemName(i, 1) <> "", itemName(i, 1), "")
+            databaseSheet.Cells(Row, 4).Value = IIf(skus(i, 1) <> "", skus(i, 1), " ")
+            databaseSheet.Cells(Row, 5).Value = IIf(brands(i, 1) <> "", brands(i, 1), " ")
+            databaseSheet.Cells(Row, 6).Value = IIf(itemStatus <> "", itemStatus, "")
+            databaseSheet.Cells(Row, 7).Value = IIf(rf_quantity(i, 1) <> "", rf_quantity(i, 1), " ")
+            databaseSheet.Cells(Row, 8).Value = IIf(stockFrom(i, 1) <> "", stockFrom(i, 1), " ")
+            databaseSheet.Cells(Row, 9).Value = IIf(stockTo(i, 1) <> "", stockTo(i, 1), " ")
+            databaseSheet.Cells(Row, 10).Value = IIf(createdBy <> "", createdBy, "")
+            databaseSheet.Cells(Row, 11).Value = IIf(department <> "", department, "")
+        End If
+    Next i
+    
+    ' Protect the database sheet
+    databaseSheet.Protect password:="enabled2024"
+    
+    MsgBox "Your request has been submitted. Please wait for the Operations team's response via e-mail. Your ticket number is: " & requestNo
+    
+    ' Unhide Guidelines and Request Database sheets while hiding the Request Form and Request Database
+    spreadsheet.Sheets("Guidelines").Visible = xlSheetVisible
+    spreadsheet.Sheets("Dashboard").Visible = xlSheetVisible
+    spreadsheet.Sheets("Request Form").Visible = xlSheetVeryHidden
+    spreadsheet.Sheets("Request Database").Visible = xlSheetVeryHidden
+    ThisWorkbook.Sheets("Dashboard").Select
+    
+    Exit Sub
+    
+ErrorHandler:
+    MsgBox "An error occurred: " & Err.Description
+    ' Handle the error gracefully, e.g., notify the user or log it
+    Exit Sub
+    
+PdfError:
+    MsgBox "An error occurred while exporting to PDF: " & Err.Description
+    Resume ErrorHandler
+End Sub
+
+Function IsMac() As Boolean
+    #If Mac Then
+        IsMac = True
+    #Else
+        IsMac = False
+    #End If
+End Function
+
+Sub ExportToPDFMac(ws As Worksheet, filePath As String)
+    ' Save the current workbook if it hasn't been saved yet
+    If ws.Parent.Path = "" Then
+        MsgBox "Please save the workbook before exporting to PDF.", vbExclamation
+        Exit Sub
+    End If
+    
+    ' Export to PDF directly
+    ws.ExportAsFixedFormat Type:=xlTypePDF, Filename:=filePath, _
+        Quality:=xlQualityStandard, IncludeDocProperties:=True, _
+        IgnorePrintAreas:=False, OpenAfterPublish:=False
+End Sub
+
+Sub SendEmailWindows(attachment As String, recipient As String, cc As String, subject As String, body As String)
+    Dim OutlookApp As Object
+    Dim OutlookMail As Object
+    
+    Set OutlookApp = CreateObject("Outlook.Application")
+    Set OutlookMail = OutlookApp.CreateItem(0)
+    
+    With OutlookMail
+        .To = recipient
+        .cc = cc
+        .subject = subject
+        .body = body
+        .Attachments.Add attachment
+        .Send
+    End With
+End Sub
+
+Sub SendEmailMac(attachment As String, recipient As String, cc As String, subject As String, body As String)
+    Dim ScriptText As String
+    
+    ' Construct the AppleScript
+    ScriptText = "set theAttachment to POSIX file " & Chr(34) & attachment & Chr(34) & vbNewLine & _
+                 "set theSubject to " & Chr(34) & subject & Chr(34) & vbNewLine & _
+                 "set theBody to " & Chr(34) & Replace(body, vbNewLine, "\n") & Chr(34) & vbNewLine & _
+                 "set theRecipient to " & Chr(34) & recipient & Chr(34) & vbNewLine & _
+                 "set theCCRecipient to " & Chr(34) & cc & Chr(34) & vbNewLine & _
+                 "tell application " & Chr(34) & "Mail" & Chr(34) & vbNewLine & _
+                 "    set theMessage to make new outgoing message with properties {subject:theSubject, content:theBody, visible:true}" & vbNewLine & _
+                 "    tell theMessage" & vbNewLine & _
+                 "        make new to recipient with properties {address:theRecipient}" & vbNewLine & _
+                 "        make new cc recipient with properties {address:theCCRecipient}" & vbNewLine & _
+                 "        make new attachment with properties {file name:theAttachment} at after the last paragraph" & vbNewLine & _
+                 "        send" & vbNewLine & _
+                 "    end tell" & vbNewLine & _
+                 "end tell"
+    
+    ' Execute the AppleScript
+    On Error Resume Next
+    MacScript (ScriptText)
+    If Err.Number <> 0 Then
+        MsgBox "An error occurred while sending the email: " & Err.Description
+        On Error GoTo 0
+    End If
+End Sub
+
+Function IsMac() As Boolean
+    #If Mac Then
+        IsMac = True
+    #Else
+        IsMac = False
+    #End If
+End Function
+
+Sub ExportToPDFMac(ws As Worksheet, filePath As String)
+    ' Save the current workbook if it hasn't been saved yet
+    If ws.Parent.Path = "" Then
+        MsgBox "Please save the workbook before exporting to PDF.", vbExclamation
+        Exit Sub
+    End If
+    
+    ' Export to PDF directly
+    ws.ExportAsFixedFormat Type:=xlTypePDF, Filename:=filePath, _
+        Quality:=xlQualityStandard, IncludeDocProperties:=True, _
+        IgnorePrintAreas:=False, OpenAfterPublish:=False
+End Sub
+
+Sub SendEmailWindows(attachment As String, recipient As String, cc As String, subject As String, body As String)
+    Dim OutlookApp As Object
+    Dim OutlookMail As Object
+    
+    Set OutlookApp = CreateObject("Outlook.Application")
+    Set OutlookMail = OutlookApp.CreateItem(0)
+    
+    With OutlookMail
+        .To = recipient
+        .cc = cc
+        .subject = subject
+        .body = body
+        .Attachments.Add attachment
+        .Send
+    End With
+End Sub
+
+Sub SendEmailMac(attachment As String, recipient As String, cc As String, subject As String, body As String)
+    Dim ScriptText As String
+    
+    ' Construct the AppleScript
+    ScriptText = "set theAttachment to " & Chr(34) & attachment & Chr(34) & " as POSIX file" & vbNewLine & _
+                 "set theSubject to " & Chr(34) & subject & Chr(34) & vbNewLine & _
+                 "set theBody to " & Chr(34) & Replace(body, vbNewLine, "\n") & Chr(34) & vbNewLine & _
+                 "set theRecipient to " & Chr(34) & recipient & Chr(34) & vbNewLine & _
+                 "set theCCRecipient to " & Chr(34) & cc & Chr(34) & vbNewLine & _
+                 "tell application " & Chr(34) & "Mail" & Chr(34) & vbNewLine & _
+                 "    set theMessage to make new outgoing message with properties {subject:theSubject, content:theBody, visible:true}" & vbNewLine & _
+                 "    tell theMessage" & vbNewLine & _
+                 "        make new to recipient with properties {address:theRecipient}" & vbNewLine & _
+                 "        make new cc recipient with properties {address:theCCRecipient}" & vbNewLine & _
+                 "        make new attachment with properties {file name:theAttachment} at after the last paragraph" & vbNewLine & _
+                 "        send" & vbNewLine & _
+                 "    end tell" & vbNewLine & _
+                 "end tell"
+    
+    ' Execute the AppleScript
+    MacScript (ScriptText)
+End Sub
